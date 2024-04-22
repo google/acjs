@@ -33,6 +33,12 @@ metadata:
   name: "{{ $name }}"
 webhooks:
 - name: "{{ $name }}"
+  namespaceSelector:
+    matchExpressions:
+      - key: name
+        operator: NotIn
+        values:
+          - {{ .Release.Namespace }}
   rules:
   - apiGroups:   [""]
     apiVersions: ["v1"]
