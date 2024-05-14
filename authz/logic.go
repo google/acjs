@@ -30,7 +30,7 @@ import (
 	"github.com/google/acjs/slsa"
 	"github.com/google/ctrdac/lookup"
 	"github.com/dop251/goja"
-	"https://github.com/mattbaird/jsonpatch"
+	"github.com/mattbaird/jsonpatch"
 
 	ctrdachttp "github.com/google/ctrdac/http"
 	k8sac "k8s.io/api/admission/v1"
