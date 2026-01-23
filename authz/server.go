@@ -71,12 +71,15 @@ func (pl *AdmissionControllerServer) handleRequest(w http.ResponseWriter, r *htt
 	}
 
 	w.WriteHeader(http.StatusOK)
-	w.Write(respBytes)
+	if _, err := w.Write(respBytes); err != nil {
+		return err
+
+		// Serve starts accepting and serving requests. It returns an error immediately if it is unable to.
+	}
 
 	return nil
 }
 
-// Serve starts accepting and serving requests. It returns an error immediately if it is unable to.
 func (pl *AdmissionControllerServer) Serve() error {
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

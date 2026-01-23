@@ -18,6 +18,7 @@ package authz
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"io/ioutil"
@@ -25,11 +26,11 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/dop251/goja"
 	log "github.com/golang/glog"
 	"github.com/google/acjs/common"
 	"github.com/google/acjs/slsa"
 	"github.com/google/ctrdac/lookup"
-	"github.com/dop251/goja"
 	"github.com/mattbaird/jsonpatch"
 
 	ctrdachttp "github.com/google/ctrdac/http"
@@ -158,7 +159,7 @@ func getImagesFromRequest(ar *k8sac.AdmissionRequest, object any) ([]string, err
 	return re, nil
 }
 
-func slsaEnsureComingFromImage(imageRef string, slsaTrustedRepos []*slsa.Repo) (bool, error) {
+func slsaEnsureComingFromImage(imageRef string, slsaTrustedRepos []*slsa.Repo) (b bool, err error) {
 	slsaTrustedRepoMatches := slsa.FindMatchingRepos(imageRef, slsaTrustedRepos)
 	if len(slsaTrustedRepoMatches) == 0 {
 		// makes no sense to fetch provenance, no idea which repo this image belongs to
@@ -174,7 +175,9 @@ func slsaEnsureComingFromImage(imageRef string, slsaTrustedRepos []*slsa.Repo) (
 		return false, err
 	}
 	tmpProvenancePath := file.Name()
-	defer os.Remove(tmpProvenancePath)
+	defer func() {
+		err = errors.Join(err, os.Remove(tmpProvenancePath))
+	}()
 	permissions := 0644 // or whatever you need
 	err = os.WriteFile(tmpProvenancePath, provenanceMeta, fs.FileMode(permissions))
 	if err != nil {
@@ -299,7 +302,7 @@ func createPatch(orgObjBytes []byte, newObj any) ([]byte, error) {
 	return json.Marshal(patches)
 }
 
-func (cp *CompiledPolicies) doEvaluate(rc *common.AdmissionControllerRequest, areq *k8sac.AdmissionRequest) *k8sac.AdmissionResponse {
+func (cp *CompiledPolicies) doEvaluate(rc *common.AdmissionControllerRequest, areq *k8sac.AdmissionRequest) (*k8sac.AdmissionResponse, error) {
 	var re k8sac.AdmissionResponse
 	re.UID = areq.UID
 	re.Allowed = false
@@ -317,10 +320,12 @@ func (cp *CompiledPolicies) doEvaluate(rc *common.AdmissionControllerRequest, ar
 	if err == nil {
 		avm := goja.New()
 
-		avm.Set("console", map[string](func(...any)){
+		if err := avm.Set("console", map[string](func(...any)){
 			"log": consoleLog,
-		})
-		avm.Set("atob", func(b64 string) string {
+		}); err != nil {
+			return nil, err
+		}
+		if err := avm.Set("atob", func(b64 string) string {
 			return jsWrapper(avm, func() (any, error) {
 				bytes, err := base64.StdEncoding.DecodeString(b64)
 				if err != nil {
@@ -328,36 +333,54 @@ func (cp *CompiledPolicies) doEvaluate(rc *common.AdmissionControllerRequest, ar
 				}
 				return string(bytes), nil
 			}).(string)
-		})
-		avm.Set("btoa", func(in string) string {
+		}); err != nil {
+			return nil, err
+		}
+		if err := avm.Set("btoa", func(in string) string {
 			return base64.StdEncoding.EncodeToString([]byte(in))
-		})
-		avm.Set("cosignVerify", func(publicKeyPath string) any {
+		}); err != nil {
+			return nil, err
+		}
+		if err := avm.Set("cosignVerify", func(publicKeyPath string) any {
 			return jsWrapper(avm, func() (any, error) {
 				return cosignVerify(areq, object, publicKeyPath)
 			})
-		})
-		avm.Set("slsaVerify", func(params SlsaParams) any {
+		}); err != nil {
+			return nil, err
+		}
+		if err := avm.Set("slsaVerify", func(params SlsaParams) any {
 			r, err := slsaVerify(areq, object, params)
 			if err != nil {
 				return err.Error()
 			}
 			return r
-		})
-		avm.Set("slsaEnsureComingFrom", func(repos []string) any {
+		}); err != nil {
+			return nil, err
+		}
+		if err := avm.Set("slsaEnsureComingFrom", func(repos []string) any {
 			return jsWrapper(avm, func() (any, error) {
 				return slsaEnsureComingFrom(areq, object, repos)
 			})
-		})
-		avm.Set("forwardToAdmissionController", func(acUrl string) any {
+		}); err != nil {
+			return nil, err
+		}
+		if err := avm.Set("forwardToAdmissionController", func(acUrl string) any {
 			return jsWrapper(avm, func() (any, error) {
 				return forwardToAdmissionController(acUrl, areq)
 			})
-		})
+		}); err != nil {
+			return nil, err
+		}
 
-		avm.Set("ac", rc)
-		avm.Set("req", areq)
-		avm.Set("object", object)
+		if err := avm.Set("ac", rc); err != nil {
+			return nil, err
+		}
+		if err := avm.Set("req", areq); err != nil {
+			return nil, err
+		}
+		if err := avm.Set("object", object); err != nil {
+			return nil, err
+		}
 
 		for _, p := range cp.compiledPolicies {
 
@@ -443,7 +466,7 @@ func (cp *CompiledPolicies) doEvaluate(rc *common.AdmissionControllerRequest, ar
 		re.Result.Status = "Failure"
 	}
 
-	return &re
+	return &re, nil
 }
 
 // LogEntry is the type that will be turned into a JSON string and will be emitted for each request

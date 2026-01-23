@@ -25,6 +25,7 @@ import (
 	"encoding/pem"
 	"io"
 	"io/ioutil"
+	"log"
 	"math/big"
 	"net"
 	"net/http"
@@ -44,14 +45,18 @@ type myHandler struct {
 
 func (h myHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	re := AdmissionControllerRequest{}
-	h.listener.PopulateRequest(&re, r)
+	if err := h.listener.PopulateRequest(&re, r); err != nil {
+		log.Printf("ignored error in PopulateRequest: %v", err)
+	}
 	re.RequestPeerCertificates = nil
 	bytes, err := json.Marshal(re)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	w.Write(bytes)
+	if _, err := w.Write(bytes); err != nil {
+		log.Printf("ignored error in Write: %v", err)
+	}
 }
 
 func TestUdsListener(t *testing.T) {
@@ -134,15 +139,23 @@ func generateSelfSignedCert(certPath, privKeyPath string) error {
 	if err != nil {
 		return err
 	}
-	pem.Encode(f, &pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
-	f.Close()
+	if err := pem.Encode(f, &pem.Block{Type: "CERTIFICATE", Bytes: derBytes}); err != nil {
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
 
 	f, err = os.OpenFile(privKeyPath, os.O_WRONLY|os.O_CREATE, 0600)
 	if err != nil {
 		return err
 	}
-	pem.Encode(f, &pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(priv)})
-	f.Close()
+	if err := pem.Encode(f, &pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(priv)}); err != nil {
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
 	return nil
 }
 
