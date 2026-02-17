@@ -14,6 +14,8 @@
 
 package main
 
+import "log"
+
 import (
 	"flag"
 )
@@ -23,5 +25,7 @@ var (
 )
 
 func init() {
-	flag.Set("alsologtostderr", "true")
+	if err := flag.Set("alsologtostderr", "true"); err != nil {
+		log.Fatal(err)
+	}
 }
